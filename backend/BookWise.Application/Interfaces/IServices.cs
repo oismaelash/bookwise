@@ -8,9 +8,19 @@ public interface IBookService
     Task<ApiResponse<IEnumerable<BookViewModel>>> GetAllAsync(CancellationToken ct = default);
     Task<ApiResponse<BookViewModel>> GetByIdAsync(int id, CancellationToken ct = default);
     Task<ApiResponse<BookViewModel>> CreateAsync(CreateBookRequest request, CancellationToken ct = default);
+    Task<ApiResponse<BookViewModel>> ImportRemoteAsync(ImportRemoteBookRequest request, CancellationToken ct = default);
     Task<ApiResponse<BookViewModel>> UpdateAsync(int id, UpdateBookRequest request, CancellationToken ct = default);
     Task<ApiResponse<bool>> DeleteAsync(int id, CancellationToken ct = default);
     Task<ApiResponse<IEnumerable<BookSummaryViewModel>>> SearchAsync(string term, CancellationToken ct = default);
+}
+
+public interface IRemoteBookSearchService
+{
+    Task<ApiResponse<IEnumerable<RemoteBookResultViewModel>>> SearchAsync(
+        string term,
+        IEnumerable<string>? sources = null,
+        int limit = 20,
+        CancellationToken ct = default);
 }
 
 public interface IAuthorService

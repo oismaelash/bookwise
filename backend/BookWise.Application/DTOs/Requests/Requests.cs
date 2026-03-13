@@ -12,6 +12,18 @@ public record CreateBookRequest(
     string? CoverImageUrl = null
 );
 
+public record ImportRemoteBookRequest(
+    [Required][StringLength(300, MinimumLength = 1)] string Title,
+    string? Description,
+    [Range(1000, 2100)] int? PublicationYear,
+    [StringLength(13)] string? ISBN,
+    [Required][StringLength(200, MinimumLength = 2)] string AuthorName,
+    [Required][Range(1, int.MaxValue)] int GenreId,
+    string? CoverImageUrl = null,
+    string? Source = null,
+    string? SourceId = null
+);
+
 public record UpdateBookRequest(
     [Required][StringLength(300, MinimumLength = 1)] string Title,
     string? Description,

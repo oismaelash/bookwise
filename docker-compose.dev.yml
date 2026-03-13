@@ -1,0 +1,57 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: bookwise
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.dev
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ASPNETCORE_URLS=http://+:8080
+      - DOTNET_USE_POLLING_FILE_WATCHER=1
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=bookwise;Username=postgres;Password=postgres
+      - Anthropic__ApiKey=${ANTHROPIC_API_KEY}
+      - Cors__AllowedOrigins=http://localhost:3000
+    ports:
+      - "5000:8080"
+    volumes:
+      - ./backend:/src
+      - api_nuget_cache:/root/.nuget/packages
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    environment:
+      - VITE_API_URL=http://localhost:5000/api/v1
+      - CHOKIDAR_USEPOLLING=1
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0 --port 3000"
+    depends_on:
+      - api
+
+volumes:
+  postgres_data_dev:
+  api_nuget_cache:
+  frontend_node_modules:

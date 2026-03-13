@@ -27,6 +27,7 @@ builder.Services.AddScoped<IBookService, BookService>();
 builder.Services.AddScoped<IAuthorService, AuthorService>();
 builder.Services.AddScoped<IGenreService, GenreService>();
 builder.Services.AddHttpClient<IAIService, AIService>();
+builder.Services.AddHttpClient<IRemoteBookSearchService, RemoteBookSearchService>();
 
 // Controllers
 builder.Services.AddControllers();
@@ -63,7 +64,23 @@ var app = builder.Build();
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<BookWiseDbContext>();
-    db.Database.Migrate();
+    const int maxAttempts = 10;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++)
+    {
+        try
+        {
+            app.Logger.LogInformation("Applying database migrations (attempt {Attempt}/{MaxAttempts})", attempt, maxAttempts);
+            db.Database.Migrate();
+            app.Logger.LogInformation("Database migrations applied successfully");
+            break;
+        }
+        catch (Exception ex) when (attempt < maxAttempts)
+        {
+            var delay = TimeSpan.FromSeconds(Math.Min(2 * attempt, 15));
+            app.Logger.LogWarning(ex, "Database migration attempt {Attempt} failed; retrying in {DelaySeconds}s", attempt, delay.TotalSeconds);
+            Thread.Sleep(delay);
+        }
+    }
 }
 
 if (app.Environment.IsDevelopment())

@@ -10,8 +10,13 @@ namespace BookWise.API.Controllers.v1;
 public class BooksController : ControllerBase
 {
     private readonly IBookService _bookService;
+    private readonly IRemoteBookSearchService _remoteBookSearchService;
 
-    public BooksController(IBookService bookService) => _bookService = bookService;
+    public BooksController(IBookService bookService, IRemoteBookSearchService remoteBookSearchService)
+    {
+        _bookService = bookService;
+        _remoteBookSearchService = remoteBookSearchService;
+    }
 
     /// <summary>Get all books with author and genre details</summary>
     [HttpGet]
@@ -42,6 +47,42 @@ public class BooksController : ControllerBase
 
         var result = await _bookService.SearchAsync(term, ct);
         return Ok(result);
+    }
+
+    /// <summary>Search remote providers (Google Books, Open Library)</summary>
+    [HttpGet("remote-search")]
+    [ProducesResponseType(StatusCodes.Status200OK)]
+    public async Task<IActionResult> RemoteSearch(
+        [FromQuery] string term,
+        [FromQuery] string? sources,
+        [FromQuery] int limit,
+        CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(term))
+            return BadRequest("Search term is required.");
+
+        var parsedSources = string.IsNullOrWhiteSpace(sources)
+            ? null
+            : sources.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var result = await _remoteBookSearchService.SearchAsync(term, parsedSources, limit <= 0 ? 20 : limit, ct);
+        return Ok(result);
+    }
+
+    /// <summary>Import a remote book (creates the author if needed)</summary>
+    [HttpPost("import")]
+    [ProducesResponseType(StatusCodes.Status201Created)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> Import([FromBody] ImportRemoteBookRequest request, CancellationToken ct)
+    {
+        if (!ModelState.IsValid)
+            return BadRequest(ModelState);
+
+        var result = await _bookService.ImportRemoteAsync(request, ct);
+        if (!result.Success)
+            return BadRequest(result);
+
+        return CreatedAtAction(nameof(GetById), new { id = result.Data!.Id }, result);
     }
 
     /// <summary>Create a new book</summary>

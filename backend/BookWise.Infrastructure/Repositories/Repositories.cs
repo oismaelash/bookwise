@@ -98,6 +98,9 @@ public class AuthorRepository : BaseRepository<Author>, IAuthorRepository
 
     public async Task<bool> ExistsByNameAsync(string name, CancellationToken ct = default) =>
         await _context.Authors.AnyAsync(a => a.Name.ToLower() == name.ToLower(), ct);
+
+    public async Task<Author?> GetByNameAsync(string name, CancellationToken ct = default) =>
+        await _context.Authors.FirstOrDefaultAsync(a => a.Name.ToLower() == name.ToLower(), ct);
 }
 
 public class GenreRepository : BaseRepository<Genre>, IGenreRepository
@@ -113,6 +116,9 @@ public class GenreRepository : BaseRepository<Genre>, IGenreRepository
 
     public async Task<bool> ExistsByNameAsync(string name, CancellationToken ct = default) =>
         await _context.Genres.AnyAsync(g => g.Name.ToLower() == name.ToLower(), ct);
+
+    public async Task<Genre?> GetByNameAsync(string name, CancellationToken ct = default) =>
+        await _context.Genres.FirstOrDefaultAsync(g => g.Name.ToLower() == name.ToLower(), ct);
 }
 
 public class UnitOfWork : IUnitOfWork

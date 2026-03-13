@@ -16,6 +16,7 @@ public interface IAuthorRepository : IRepository<Author>
     Task<IEnumerable<Author>> GetAllWithBooksAsync(CancellationToken cancellationToken = default);
     Task<Author?> GetByIdWithBooksAsync(int id, CancellationToken cancellationToken = default);
     Task<bool> ExistsByNameAsync(string name, CancellationToken cancellationToken = default);
+    Task<Author?> GetByNameAsync(string name, CancellationToken cancellationToken = default);
 }
 
 public interface IGenreRepository : IRepository<Genre>
@@ -23,6 +24,7 @@ public interface IGenreRepository : IRepository<Genre>
     Task<IEnumerable<Genre>> GetAllWithBooksAsync(CancellationToken cancellationToken = default);
     Task<Genre?> GetByIdWithBooksAsync(int id, CancellationToken cancellationToken = default);
     Task<bool> ExistsByNameAsync(string name, CancellationToken cancellationToken = default);
+    Task<Genre?> GetByNameAsync(string name, CancellationToken cancellationToken = default);
 }
 
 public interface IUnitOfWork

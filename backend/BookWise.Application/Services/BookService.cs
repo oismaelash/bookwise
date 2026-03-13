@@ -62,6 +62,44 @@ public class BookService : IBookService
         return ApiResponse<BookViewModel>.Ok(MapToViewModel(created!), "Book created successfully.");
     }
 
+    public async Task<ApiResponse<BookViewModel>> ImportRemoteAsync(ImportRemoteBookRequest request, CancellationToken ct = default)
+    {
+        var genreExists = await _unitOfWork.Genres.ExistsAsync(request.GenreId, ct);
+        if (!genreExists)
+            return ApiResponse<BookViewModel>.Fail($"Genre with ID {request.GenreId} not found.");
+
+        var authorName = request.AuthorName.Trim();
+        if (authorName.Length < 2)
+            return ApiResponse<BookViewModel>.Fail("AuthorName is required.");
+
+        var author = await _unitOfWork.Authors.GetByNameAsync(authorName, ct);
+        if (author is null)
+        {
+            author = new Author(authorName, null, null, null);
+            await _unitOfWork.Authors.AddAsync(author, ct);
+            await _unitOfWork.CommitAsync(ct);
+        }
+
+        var publicationYear = request.PublicationYear ?? DateTime.UtcNow.Year;
+
+        var book = new Book(
+            request.Title,
+            request.Description,
+            publicationYear,
+            request.ISBN,
+            author.Id,
+            request.GenreId,
+            request.CoverImageUrl
+        );
+
+        await _unitOfWork.Books.AddAsync(book, ct);
+        await _unitOfWork.CommitAsync(ct);
+
+        var created = await _unitOfWork.Books.GetByIdWithDetailsAsync(book.Id, ct);
+        _logger.LogInformation("Book imported: {BookId} - {Title} ({Source})", book.Id, book.Title, request.Source);
+        return ApiResponse<BookViewModel>.Ok(MapToViewModel(created!), "Book imported successfully.");
+    }
+
     public async Task<ApiResponse<BookViewModel>> UpdateAsync(int id, UpdateBookRequest request, CancellationToken ct = default)
     {
         var book = await _unitOfWork.Books.GetByIdWithDetailsAsync(id, ct);

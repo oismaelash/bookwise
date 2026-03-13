@@ -45,7 +45,7 @@ public class AuthorService : IAuthorService
         if (nameExists)
             return ApiResponse<AuthorViewModel>.Fail($"Author '{request.Name}' already exists.");
 
-        var author = new Author(request.Name, request.Biography, request.Nationality, request.BirthDate);
+        var author = new Author(request.Name, request.Biography, request.Nationality, NormalizeUtc(request.BirthDate));
         await _unitOfWork.Authors.AddAsync(author, ct);
         await _unitOfWork.CommitAsync(ct);
 
@@ -61,13 +61,26 @@ public class AuthorService : IAuthorService
         if (author is null)
             return ApiResponse<AuthorViewModel>.Fail($"Author with ID {id} not found.");
 
-        author.Update(request.Name, request.Biography, request.Nationality, request.BirthDate);
+        author.Update(request.Name, request.Biography, request.Nationality, NormalizeUtc(request.BirthDate));
         await _unitOfWork.Authors.UpdateAsync(author, ct);
         await _unitOfWork.CommitAsync(ct);
 
         return ApiResponse<AuthorViewModel>.Ok(
             new AuthorViewModel(author.Id, author.Name, author.Biography, author.Nationality, author.BirthDate, author.Books.Count, author.CreatedAt),
             "Author updated successfully.");
+    }
+
+    private static DateTime? NormalizeUtc(DateTime? value)
+    {
+        if (!value.HasValue)
+            return null;
+
+        return value.Value.Kind switch
+        {
+            DateTimeKind.Utc => value.Value,
+            DateTimeKind.Local => value.Value.ToUniversalTime(),
+            _ => DateTime.SpecifyKind(value.Value, DateTimeKind.Utc)
+        };
     }
 
     public async Task<ApiResponse<bool>> DeleteAsync(int id, CancellationToken ct = default)

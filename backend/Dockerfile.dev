@@ -1,0 +1,18 @@
+FROM mcr.microsoft.com/dotnet/sdk:8.0
+
+WORKDIR /src
+EXPOSE 8080
+
+ENV ASPNETCORE_URLS=http://+:8080
+ENV DOTNET_USE_POLLING_FILE_WATCHER=1
+ENV DOTNET_WATCH_SUPPRESS_LAUNCH_BROWSER=1
+
+COPY ["BookWise.API/BookWise.API.csproj", "BookWise.API/"]
+COPY ["BookWise.Application/BookWise.Application.csproj", "BookWise.Application/"]
+COPY ["BookWise.Domain/BookWise.Domain.csproj", "BookWise.Domain/"]
+COPY ["BookWise.Infrastructure/BookWise.Infrastructure.csproj", "BookWise.Infrastructure/"]
+RUN dotnet restore "BookWise.API/BookWise.API.csproj"
+
+COPY . .
+
+ENTRYPOINT ["dotnet", "watch", "--project", "BookWise.API/BookWise.API.csproj", "run", "--urls", "http://0.0.0.0:8080"]

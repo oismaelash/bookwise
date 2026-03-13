@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Search, Pencil, Trash2, BookOpen, Sparkles, X } from 'lucide-react';
 import { useBookStore } from '../store/BookContext';
-import { booksApi, aiApi, CreateBookDto } from '../services/api';
+import { booksApi, aiApi, CreateBookDto, ImportRemoteBookDto, RemoteBookResult } from '../services/api';
 import toast from 'react-hot-toast';
 
 function BookModal({ book, onClose, onSave }: any) {
@@ -94,10 +94,107 @@ function BookModal({ book, onClose, onSave }: any) {
   );
 }
 
+function ImportBookModal({ seed, onClose, onSave }: any) {
+  const { state } = useBookStore();
+  const [form, setForm] = useState<ImportRemoteBookDto>({
+    title: seed?.title || '',
+    description: seed?.description || '',
+    publicationYear: seed?.publicationYear || new Date().getFullYear(),
+    isbn: seed?.isbn || '',
+    authorName: (seed?.authors?.[0] || '').trim(),
+    genreId: 0,
+    coverImageUrl: seed?.coverImageUrl || '',
+    source: seed?.source,
+    sourceId: seed?.sourceId,
+  });
+  const [generating, setGenerating] = useState(false);
+
+  const handleGenerateSynopsis = async () => {
+    if (!form.title || !form.authorName || !form.genreId) {
+      toast.error('Preencha título, autor e gênero primeiro');
+      return;
+    }
+    const genre = state.genres.find(g => g.id === form.genreId);
+    setGenerating(true);
+    try {
+      const res = await aiApi.generateSynopsis({
+        title: form.title, authorName: form.authorName,
+        genreName: genre!.name, publicationYear: form.publicationYear
+      });
+      if (res.success) setForm(f => ({ ...f, description: res.data.synopsis }));
+    } catch { toast.error('Erro ao gerar sinopse'); }
+    finally { setGenerating(false); }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!form.genreId) { toast.error('Selecione um gênero'); return; }
+    if (!form.authorName) { toast.error('Informe o autor'); return; }
+    await onSave(form);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="bg-stone-900 border border-stone-700 rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between p-6 border-b border-stone-800">
+          <h3 className="font-serif text-lg font-semibold text-amber-100">Importar Livro</h3>
+          <button onClick={onClose} className="text-stone-400 hover:text-amber-100"><X size={20} /></button>
+        </div>
+        <form onSubmit={handleSubmit} className="p-6 space-y-4">
+          <div>
+            <label className="text-xs text-stone-400 mb-1 block">Título *</label>
+            <input className="input-field" required value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-stone-400 mb-1 block">Autor *</label>
+              <input className="input-field" required value={form.authorName} onChange={e => setForm(f => ({ ...f, authorName: e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs text-stone-400 mb-1 block">Gênero *</label>
+              <select className="input-field" required value={form.genreId} onChange={e => setForm(f => ({ ...f, genreId: +e.target.value }))}>
+                <option value={0}>Selecionar...</option>
+                {state.genres.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs text-stone-400 mb-1 block">Ano</label>
+              <input type="number" className="input-field" value={form.publicationYear || ''} onChange={e => setForm(f => ({ ...f, publicationYear: +e.target.value }))} />
+            </div>
+            <div>
+              <label className="text-xs text-stone-400 mb-1 block">ISBN</label>
+              <input className="input-field" value={form.isbn || ''} onChange={e => setForm(f => ({ ...f, isbn: e.target.value }))} />
+            </div>
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <label className="text-xs text-stone-400">Descrição / Sinopse</label>
+              <button type="button" onClick={handleGenerateSynopsis} disabled={generating}
+                className="flex items-center gap-1 text-xs text-purple-400 hover:text-purple-300 disabled:opacity-50">
+                <Sparkles size={12} /> {generating ? 'Gerando...' : 'Gerar com IA'}
+              </button>
+            </div>
+            <textarea className="input-field min-h-[100px] resize-none" value={form.description || ''}
+              onChange={e => setForm(f => ({ ...f, description: e.target.value }))} />
+          </div>
+          <div className="flex gap-3 pt-2">
+            <button type="button" onClick={onClose} className="flex-1 btn-secondary">Cancelar</button>
+            <button type="submit" className="flex-1 btn-primary">Adicionar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function BooksPage() {
   const { state, fetchBooks, fetchAuthors, fetchGenres, dispatch } = useBookStore();
   const [search, setSearch] = useState('');
   const [modal, setModal] = useState<{ open: boolean; book?: any }>({ open: false });
+  const [remote, setRemote] = useState<{ loading: boolean; results: RemoteBookResult[] }>({ loading: false, results: [] });
+  const [importModal, setImportModal] = useState<{ open: boolean; seed?: RemoteBookResult }>({ open: false });
 
   useEffect(() => { fetchBooks(); fetchAuthors(); fetchGenres(); }, [fetchBooks, fetchAuthors, fetchGenres]);
 
@@ -128,6 +225,31 @@ export default function BooksPage() {
     } catch { toast.error('Erro ao excluir'); }
   };
 
+  const handleRemoteSearch = async () => {
+    if (!search.trim()) { toast.error('Digite algo para buscar'); return; }
+    setRemote(r => ({ ...r, loading: true }));
+    try {
+      const res = await booksApi.remoteSearch(search.trim(), 'google,openlibrary', 20);
+      if (res.success) setRemote({ loading: false, results: res.data });
+      else { setRemote({ loading: false, results: [] }); toast.error(res.message || 'Erro na busca remota'); }
+    } catch {
+      setRemote({ loading: false, results: [] });
+      toast.error('Erro na busca remota');
+    }
+  };
+
+  const handleImportSave = async (form: ImportRemoteBookDto) => {
+    try {
+      const res = await booksApi.importRemote(form);
+      if (res.success) {
+        dispatch({ type: 'ADD_BOOK', payload: res.data });
+        await fetchAuthors();
+        toast.success('Livro importado!');
+        setImportModal({ open: false });
+      } else toast.error(res.message);
+    } catch { toast.error('Erro ao importar'); }
+  };
+
   return (
     <div className="space-y-6 animate-fadeIn">
       <div className="flex items-center justify-between">
@@ -140,9 +262,14 @@ export default function BooksPage() {
         </button>
       </div>
 
-      <div className="relative">
-        <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" />
-        <input className="input-field pl-10" placeholder="Buscar por título ou autor..." value={search} onChange={e => setSearch(e.target.value)} />
+      <div className="flex gap-3">
+        <div className="relative flex-1">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-500" />
+          <input className="input-field pl-10" placeholder="Buscar por título ou autor..." value={search} onChange={e => setSearch(e.target.value)} />
+        </div>
+        <button onClick={handleRemoteSearch} disabled={!search.trim() || remote.loading} className="btn-secondary whitespace-nowrap">
+          {remote.loading ? 'Buscando...' : 'Buscar remoto'}
+        </button>
       </div>
 
       {state.loading.books ? (
@@ -179,7 +306,53 @@ export default function BooksPage() {
         </div>
       )}
 
+      {remote.loading ? (
+        <div className="grid gap-3">
+          {[1, 2, 3].map(i => <div key={i} className="h-20 bg-stone-900 rounded-xl animate-pulse" />)}
+        </div>
+      ) : remote.results.length > 0 ? (
+        <div className="space-y-3">
+          <div className="flex items-end justify-between">
+            <div>
+              <h3 className="text-lg font-serif font-semibold text-amber-100">Resultados remotos</h3>
+              <p className="text-stone-400 text-sm">{remote.results.length} resultados</p>
+            </div>
+            <button onClick={() => setRemote({ loading: false, results: [] })} className="text-xs text-stone-400 hover:text-amber-200">
+              Limpar
+            </button>
+          </div>
+          <div className="grid gap-3">
+            {remote.results.map(item => (
+              <div key={`${item.source}:${item.sourceId}`} className="bg-stone-900 border border-stone-800 hover:border-amber-800/40 rounded-xl p-5 flex items-start gap-4 transition-all">
+                {item.coverImageUrl ? (
+                  <img src={item.coverImageUrl} alt="" className="w-12 h-14 rounded-lg object-cover flex-shrink-0" />
+                ) : (
+                  <div className="w-12 h-14 bg-amber-900/20 rounded-lg flex items-center justify-center flex-shrink-0">
+                    <BookOpen size={20} className="text-amber-700" />
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <h4 className="font-semibold text-amber-100 truncate">{item.title}</h4>
+                  <p className="text-sm text-stone-400">
+                    {(item.authors || []).join(', ') || 'Autor desconhecido'}
+                    {item.publicationYear ? ` · ${item.publicationYear}` : ''}
+                    <span className="text-amber-700/70"> · {item.source}</span>
+                  </p>
+                  {item.description && <p className="text-xs text-stone-500 mt-1 line-clamp-2">{item.description}</p>}
+                </div>
+                <div className="flex items-start">
+                  <button onClick={() => setImportModal({ open: true, seed: item })} className="btn-primary whitespace-nowrap">
+                    Adicionar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
       {modal.open && <BookModal book={modal.book} onClose={() => setModal({ open: false })} onSave={handleSave} />}
+      {importModal.open && <ImportBookModal seed={importModal.seed} onClose={() => setImportModal({ open: false })} onSave={handleImportSave} />}
     </div>
   );
 }

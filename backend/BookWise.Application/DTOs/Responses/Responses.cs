@@ -24,6 +24,17 @@ public record BookSummaryViewModel(
     int PublicationYear
 );
 
+public record RemoteBookResultViewModel(
+    string Source,
+    string SourceId,
+    string Title,
+    IEnumerable<string> Authors,
+    int? PublicationYear,
+    string? ISBN,
+    string? Description,
+    string? CoverImageUrl
+);
+
 public record AuthorViewModel(
     int Id,
     string Name,

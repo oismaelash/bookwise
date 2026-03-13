@@ -22,11 +22,38 @@ export interface CreateBookDto { title: string; description?: string; publicatio
 export interface CreateAuthorDto { name: string; biography?: string; nationality?: string; birthDate?: string; }
 export interface CreateGenreDto { name: string; description?: string; }
 
+export interface RemoteBookResult {
+  source: string;
+  sourceId: string;
+  title: string;
+  authors: string[];
+  publicationYear?: number;
+  isbn?: string;
+  description?: string;
+  coverImageUrl?: string;
+}
+
+export interface ImportRemoteBookDto {
+  title: string;
+  description?: string;
+  publicationYear?: number;
+  isbn?: string;
+  authorName: string;
+  genreId: number;
+  coverImageUrl?: string;
+  source?: string;
+  sourceId?: string;
+}
+
 // Books
 export const booksApi = {
   getAll: () => request<ApiResponse<Book[]>>('/books'),
   getById: (id: number) => request<ApiResponse<Book>>(`/books/${id}`),
   search: (term: string) => request<ApiResponse<BookSummary[]>>(`/books/search?term=${encodeURIComponent(term)}`),
+  remoteSearch: (term: string, sources?: string, limit: number = 20) =>
+    request<ApiResponse<RemoteBookResult[]>>(`/books/remote-search?term=${encodeURIComponent(term)}${sources ? `&sources=${encodeURIComponent(sources)}` : ''}&limit=${limit}`),
+  importRemote: (data: ImportRemoteBookDto) =>
+    request<ApiResponse<Book>>('/books/import', { method: 'POST', body: JSON.stringify(data) }),
   create: (data: CreateBookDto) => request<ApiResponse<Book>>('/books', { method: 'POST', body: JSON.stringify(data) }),
   update: (id: number, data: CreateBookDto) => request<ApiResponse<Book>>(`/books/${id}`, { method: 'PUT', body: JSON.stringify(data) }),
   delete: (id: number) => request<ApiResponse<boolean>>(`/books/${id}`, { method: 'DELETE' }),
