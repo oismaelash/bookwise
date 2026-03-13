@@ -22,16 +22,19 @@ public class AuthController : ControllerBase
     [HttpGet("google/start")]
     public IActionResult GoogleStart([FromQuery] string? returnUrl)
     {
-        var clientId = HttpContext.RequestServices.GetRequiredService<IConfiguration>()["Auth:Google:ClientId"];
+        var cfg = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
+        var clientId = cfg["Auth:Google:ClientId"];
         if (string.IsNullOrWhiteSpace(clientId))
             return BadRequest(new { message = "Google ClientId não configurado." });
 
-        var callbackUrl = Url.ActionLink(nameof(GoogleCallback), "Auth", values: null, protocol: Request.Scheme, host: Request.Host.ToString());
+        var callbackUrl = cfg["Auth:Google:RedirectUri"];
+        if (string.IsNullOrWhiteSpace(callbackUrl))
+            callbackUrl = Url.ActionLink(nameof(GoogleCallback), "Auth", values: null, protocol: Request.Scheme, host: Request.Host.ToString());
         if (string.IsNullOrWhiteSpace(callbackUrl))
             return BadRequest(new { message = "Callback URL inválida." });
 
         var state = Guid.NewGuid().ToString("N");
-        var allowedOrigins = (HttpContext.RequestServices.GetRequiredService<IConfiguration>()["Cors:AllowedOrigins"] ?? "http://localhost:4000")
+        var allowedOrigins = (cfg["Cors:AllowedOrigins"] ?? "http://localhost:4000")
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
 
         var safeReturnUrl = BuildSafeReturnUrl(returnUrl, allowedOrigins) ?? $"{allowedOrigins[0].TrimEnd('/')}/login";
@@ -70,6 +73,7 @@ public class AuthController : ControllerBase
     [HttpGet("callback/google")]
     public async Task<IActionResult> GoogleCallback([FromQuery] string? code, [FromQuery] string? state, [FromQuery] string? error, CancellationToken ct)
     {
+        var cfg = HttpContext.RequestServices.GetRequiredService<IConfiguration>();
         var returnUrl = Request.Cookies["g_return"];
         var stateCookie = Request.Cookies["g_state"];
 
@@ -82,7 +86,9 @@ public class AuthController : ControllerBase
         if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state) || string.IsNullOrWhiteSpace(stateCookie) || !string.Equals(state, stateCookie, StringComparison.Ordinal))
             return Redirect(AppendFragment(returnUrl, "error=invalid_state"));
 
-        var callbackUrl = Url.ActionLink(nameof(GoogleCallback), "Auth", values: null, protocol: Request.Scheme, host: Request.Host.ToString());
+        var callbackUrl = cfg["Auth:Google:RedirectUri"];
+        if (string.IsNullOrWhiteSpace(callbackUrl))
+            callbackUrl = Url.ActionLink(nameof(GoogleCallback), "Auth", values: null, protocol: Request.Scheme, host: Request.Host.ToString());
         if (string.IsNullOrWhiteSpace(callbackUrl))
             return Redirect(AppendFragment(returnUrl, "error=invalid_callback"));
 

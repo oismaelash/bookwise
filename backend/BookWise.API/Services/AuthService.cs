@@ -224,6 +224,7 @@ public class AuthService : IAuthService
             return ApiResponse<AuthTokenResponse>.Fail("Código inválido.", errorCode: "GOOGLE_INVALID_CODE");
 
         string? idToken;
+        string? accessToken;
         try
         {
             var client = _httpClientFactory.CreateClient();
@@ -244,6 +245,7 @@ public class AuthService : IAuthService
             var json = await res.Content.ReadAsStringAsync(ct);
             using var doc = System.Text.Json.JsonDocument.Parse(json);
             idToken = doc.RootElement.TryGetProperty("id_token", out var idTokenProp) ? idTokenProp.GetString() : null;
+            accessToken = doc.RootElement.TryGetProperty("access_token", out var accessTokenProp) ? accessTokenProp.GetString() : null;
         }
         catch (Exception ex)
         {
@@ -251,10 +253,64 @@ public class AuthService : IAuthService
             return ApiResponse<AuthTokenResponse>.Fail("Falha ao autenticar com Google.", errorCode: "GOOGLE_TOKEN_EXCHANGE_FAILED");
         }
 
+        if (!string.IsNullOrWhiteSpace(accessToken))
+        {
+            var userInfo = await TryGetGoogleUserInfoAsync(accessToken, ct);
+            if (userInfo is not null)
+                return await UpsertGoogleUserAndIssueTokenAsync(userInfo.Value.Sub, userInfo.Value.Email, userInfo.Value.Name, ct);
+        }
+
         if (string.IsNullOrWhiteSpace(idToken))
             return ApiResponse<AuthTokenResponse>.Fail("Falha ao autenticar com Google.", errorCode: "GOOGLE_MISSING_ID_TOKEN");
 
         return await LoginWithGoogleAsync(new GoogleLoginRequest(idToken), ct);
+    }
+
+    private async Task<ApiResponse<AuthTokenResponse>> UpsertGoogleUserAndIssueTokenAsync(string sub, string? email, string? name, CancellationToken ct)
+    {
+        var user = await _uow.Users.GetByGoogleSubjectAsync(sub, ct);
+        if (user is null)
+        {
+            user = UserAccount.CreateFromGoogle(sub, email, name);
+            await _uow.Users.AddAsync(user, ct);
+        }
+        else
+        {
+            user.UpdateGoogleProfile(email, name);
+        }
+
+        user.MarkLogin();
+        await _uow.CommitAsync(ct);
+
+        return ApiResponse<AuthTokenResponse>.Ok(IssueToken(user));
+    }
+
+    private async Task<(string Sub, string? Email, string? Name)?> TryGetGoogleUserInfoAsync(string accessToken, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            using var req = new HttpRequestMessage(HttpMethod.Get, "https://openidconnect.googleapis.com/v1/userinfo");
+            req.Headers.Authorization = new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessToken);
+
+            using var res = await client.SendAsync(req, ct);
+            if (!res.IsSuccessStatusCode) return null;
+
+            var json = await res.Content.ReadAsStringAsync(ct);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+            var sub = doc.RootElement.TryGetProperty("sub", out var subProp) ? subProp.GetString() : null;
+            if (string.IsNullOrWhiteSpace(sub)) return null;
+
+            var email = doc.RootElement.TryGetProperty("email", out var emailProp) ? emailProp.GetString() : null;
+            var name = doc.RootElement.TryGetProperty("name", out var nameProp) ? nameProp.GetString() : null;
+            return (sub, email, name);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao obter userinfo do Google");
+            return null;
+        }
     }
 
     private async Task<ClaimsPrincipal?> TryValidateGoogleTokenViaTokenInfoAsync(string credential, string expectedClientId, CancellationToken ct)

@@ -29,6 +29,7 @@ services:
       - PilotStatus__TemplateId=${PILOT_STATUS_TEMPLATE_ID}
       - Auth__Google__ClientId=${GOOGLE_CLIENT_ID}
       - Auth__Google__ClientSecret=${GOOGLE_CLIENT_SECRET}
+      - Auth__Google__RedirectUri=https://meulivro-digital.ismaelnascimento.com/api/v1/auth/callback/google
       - Cors__AllowedOrigins=http://localhost:4000
     ports:
       - "5000:8080"
