@@ -106,7 +106,7 @@ echo "ANTHROPIC_API_KEY=sk-ant-..." > .env
 docker-compose up --build
 
 # Acesse:
-# Frontend: http://localhost:6000
+# Frontend: http://localhost:4000
 # API + Swagger: http://localhost:5000
 ```
 
@@ -144,7 +144,7 @@ echo "VITE_API_URL=http://localhost:5000/api/v1" > .env.development
 npm install
 npm run dev
 
-# Acesse: http://localhost:6000
+# Acesse: http://localhost:4000
 ```
 
 ---

@@ -1,16 +1,17 @@
 services:
   postgres:
     image: postgres:16-alpine
+    command: ["postgres", "-p", "45432"]
     environment:
       POSTGRES_DB: bookwise
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
     ports:
-      - "45432:5432"
+      - "45432:45432"
     volumes:
       - postgres_data_prod:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -p 45432"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -21,7 +22,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - ConnectionStrings__DefaultConnection=Host=postgres;Port=5432;Database=bookwise;Username=postgres;Password=postgres
+      - ConnectionStrings__DefaultConnection=Host=postgres;Port=45432;Database=bookwise;Username=postgres;Password=postgres
       - DeepSeek__ApiKey=${DEEPSEEK_API_KEY}
       - Anthropic__ApiKey=${ANTHROPIC_API_KEY}
       - Cors__AllowedOrigins=http://localhost:4000
