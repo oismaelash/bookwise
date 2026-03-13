@@ -129,6 +129,23 @@ public class AuthService : IAuthService
         ClaimsPrincipal principal;
         try
         {
+            try
+            {
+                var unvalidated = new JwtSecurityTokenHandler().ReadJwtToken(request.Credential);
+                var aud = unvalidated.Audiences?.FirstOrDefault();
+                var iss = unvalidated.Issuer;
+
+                if (!string.IsNullOrWhiteSpace(aud) && !string.Equals(aud, clientId, StringComparison.Ordinal))
+                    return ApiResponse<AuthTokenResponse>.Fail("Token do Google inválido (audience não confere).", errorCode: "GOOGLE_AUDIENCE_MISMATCH");
+
+                if (!string.IsNullOrWhiteSpace(iss) && iss is not "https://accounts.google.com" && iss is not "accounts.google.com")
+                    return ApiResponse<AuthTokenResponse>.Fail("Token do Google inválido (issuer não confere).", errorCode: "GOOGLE_ISSUER_MISMATCH");
+            }
+            catch
+            {
+                return ApiResponse<AuthTokenResponse>.Fail("Token do Google inválido.", errorCode: "GOOGLE_INVALID_TOKEN_FORMAT");
+            }
+
             var oidc = await GoogleOidcConfigurationManager.GetConfigurationAsync(ct);
             var tokenHandler = new JwtSecurityTokenHandler();
 
@@ -146,10 +163,29 @@ public class AuthService : IAuthService
 
             principal = tokenHandler.ValidateToken(request.Credential, parameters, out _);
         }
+        catch (SecurityTokenExpiredException ex)
+        {
+            _logger.LogWarning(ex, "Token do Google expirado");
+            return ApiResponse<AuthTokenResponse>.Fail("Token do Google expirado.", errorCode: "GOOGLE_TOKEN_EXPIRED");
+        }
+        catch (SecurityTokenInvalidAudienceException ex)
+        {
+            _logger.LogWarning(ex, "Audience inválida no token do Google");
+            return ApiResponse<AuthTokenResponse>.Fail("Token do Google inválido (audience não confere).", errorCode: "GOOGLE_AUDIENCE_MISMATCH");
+        }
+        catch (SecurityTokenInvalidIssuerException ex)
+        {
+            _logger.LogWarning(ex, "Issuer inválido no token do Google");
+            return ApiResponse<AuthTokenResponse>.Fail("Token do Google inválido (issuer não confere).", errorCode: "GOOGLE_ISSUER_MISMATCH");
+        }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Falha ao validar token do Google");
-            return ApiResponse<AuthTokenResponse>.Fail("Falha ao autenticar com Google.", errorCode: "GOOGLE_INVALID_TOKEN");
+            var tokenInfo = await TryValidateGoogleTokenViaTokenInfoAsync(request.Credential, clientId, ct);
+            if (tokenInfo is null)
+                return ApiResponse<AuthTokenResponse>.Fail("Falha ao autenticar com Google.", errorCode: "GOOGLE_INVALID_TOKEN");
+
+            principal = tokenInfo;
         }
 
         var googleSubject = principal.FindFirstValue("sub");
@@ -174,6 +210,90 @@ public class AuthService : IAuthService
         await _uow.CommitAsync(ct);
 
         return ApiResponse<AuthTokenResponse>.Ok(IssueToken(user));
+    }
+
+    public async Task<ApiResponse<AuthTokenResponse>> LoginWithGoogleCodeAsync(string code, string redirectUri, CancellationToken ct = default)
+    {
+        var clientId = _cfg["Auth:Google:ClientId"];
+        var clientSecret = _cfg["Auth:Google:ClientSecret"];
+
+        if (string.IsNullOrWhiteSpace(clientId) || string.IsNullOrWhiteSpace(clientSecret))
+            return ApiResponse<AuthTokenResponse>.Fail("Google não configurado.", errorCode: "GOOGLE_NOT_CONFIGURED");
+
+        if (string.IsNullOrWhiteSpace(code))
+            return ApiResponse<AuthTokenResponse>.Fail("Código inválido.", errorCode: "GOOGLE_INVALID_CODE");
+
+        string? idToken;
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            using var req = new HttpRequestMessage(HttpMethod.Post, "https://oauth2.googleapis.com/token");
+            req.Content = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["code"] = code,
+                ["client_id"] = clientId,
+                ["client_secret"] = clientSecret,
+                ["redirect_uri"] = redirectUri,
+                ["grant_type"] = "authorization_code"
+            });
+
+            using var res = await client.SendAsync(req, ct);
+            if (!res.IsSuccessStatusCode)
+                return ApiResponse<AuthTokenResponse>.Fail("Falha ao autenticar com Google.", errorCode: "GOOGLE_TOKEN_EXCHANGE_FAILED");
+
+            var json = await res.Content.ReadAsStringAsync(ct);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            idToken = doc.RootElement.TryGetProperty("id_token", out var idTokenProp) ? idTokenProp.GetString() : null;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao trocar code por tokens do Google");
+            return ApiResponse<AuthTokenResponse>.Fail("Falha ao autenticar com Google.", errorCode: "GOOGLE_TOKEN_EXCHANGE_FAILED");
+        }
+
+        if (string.IsNullOrWhiteSpace(idToken))
+            return ApiResponse<AuthTokenResponse>.Fail("Falha ao autenticar com Google.", errorCode: "GOOGLE_MISSING_ID_TOKEN");
+
+        return await LoginWithGoogleAsync(new GoogleLoginRequest(idToken), ct);
+    }
+
+    private async Task<ClaimsPrincipal?> TryValidateGoogleTokenViaTokenInfoAsync(string credential, string expectedClientId, CancellationToken ct)
+    {
+        try
+        {
+            var client = _httpClientFactory.CreateClient();
+            var url = $"https://oauth2.googleapis.com/tokeninfo?id_token={Uri.EscapeDataString(credential)}";
+            using var res = await client.GetAsync(url, ct);
+            if (!res.IsSuccessStatusCode) return null;
+
+            var json = await res.Content.ReadAsStringAsync(ct);
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+
+            var aud = doc.RootElement.TryGetProperty("aud", out var audProp) ? audProp.GetString() : null;
+            if (string.IsNullOrWhiteSpace(aud) || !string.Equals(aud, expectedClientId, StringComparison.Ordinal))
+                return null;
+
+            var sub = doc.RootElement.TryGetProperty("sub", out var subProp) ? subProp.GetString() : null;
+            if (string.IsNullOrWhiteSpace(sub)) return null;
+
+            var iss = doc.RootElement.TryGetProperty("iss", out var issProp) ? issProp.GetString() : null;
+            if (!string.IsNullOrWhiteSpace(iss) && iss is not "https://accounts.google.com" && iss is not "accounts.google.com")
+                return null;
+
+            var email = doc.RootElement.TryGetProperty("email", out var emailProp) ? emailProp.GetString() : null;
+            var name = doc.RootElement.TryGetProperty("name", out var nameProp) ? nameProp.GetString() : null;
+
+            var claims = new List<Claim> { new("sub", sub) };
+            if (!string.IsNullOrWhiteSpace(email)) claims.Add(new("email", email));
+            if (!string.IsNullOrWhiteSpace(name)) claims.Add(new("name", name));
+
+            return new ClaimsPrincipal(new ClaimsIdentity(claims, "google_tokeninfo"));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Falha ao validar token do Google via tokeninfo");
+            return null;
+        }
     }
 
     public async Task<ApiResponse<UserViewModel>> MeAsync(int userId, CancellationToken ct = default)

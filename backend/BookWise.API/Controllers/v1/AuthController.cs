@@ -19,6 +19,86 @@ public class AuthController : ControllerBase
     }
 
     [AllowAnonymous]
+    [HttpGet("google/start")]
+    public IActionResult GoogleStart([FromQuery] string? returnUrl)
+    {
+        var clientId = HttpContext.RequestServices.GetRequiredService<IConfiguration>()["Auth:Google:ClientId"];
+        if (string.IsNullOrWhiteSpace(clientId))
+            return BadRequest(new { message = "Google ClientId não configurado." });
+
+        var callbackUrl = Url.ActionLink(nameof(GoogleCallback), "Auth", values: null, protocol: Request.Scheme, host: Request.Host.ToString());
+        if (string.IsNullOrWhiteSpace(callbackUrl))
+            return BadRequest(new { message = "Callback URL inválida." });
+
+        var state = Guid.NewGuid().ToString("N");
+        var allowedOrigins = (HttpContext.RequestServices.GetRequiredService<IConfiguration>()["Cors:AllowedOrigins"] ?? "http://localhost:4000")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+
+        var safeReturnUrl = BuildSafeReturnUrl(returnUrl, allowedOrigins) ?? $"{allowedOrigins[0].TrimEnd('/')}/login";
+
+        Response.Cookies.Append("g_state", state, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = Request.IsHttps,
+            SameSite = SameSiteMode.Lax,
+            Path = "/api/v1/auth/callback/google",
+            Expires = DateTimeOffset.UtcNow.AddMinutes(10)
+        });
+
+        Response.Cookies.Append("g_return", safeReturnUrl, new CookieOptions
+        {
+            HttpOnly = true,
+            Secure = Request.IsHttps,
+            SameSite = SameSiteMode.Lax,
+            Path = "/api/v1/auth/callback/google",
+            Expires = DateTimeOffset.UtcNow.AddMinutes(10)
+        });
+
+        var authUrl =
+            "https://accounts.google.com/o/oauth2/v2/auth" +
+            "?client_id=" + Uri.EscapeDataString(clientId) +
+            "&redirect_uri=" + Uri.EscapeDataString(callbackUrl) +
+            "&response_type=code" +
+            "&scope=" + Uri.EscapeDataString("openid email profile") +
+            "&state=" + Uri.EscapeDataString(state) +
+            "&prompt=select_account";
+
+        return Redirect(authUrl);
+    }
+
+    [AllowAnonymous]
+    [HttpGet("callback/google")]
+    public async Task<IActionResult> GoogleCallback([FromQuery] string? code, [FromQuery] string? state, [FromQuery] string? error, CancellationToken ct)
+    {
+        var returnUrl = Request.Cookies["g_return"];
+        var stateCookie = Request.Cookies["g_state"];
+
+        Response.Cookies.Delete("g_return", new CookieOptions { Path = "/api/v1/auth/callback/google" });
+        Response.Cookies.Delete("g_state", new CookieOptions { Path = "/api/v1/auth/callback/google" });
+
+        if (!string.IsNullOrWhiteSpace(error))
+            return Redirect(AppendFragment(returnUrl, $"error={Uri.EscapeDataString(error)}"));
+
+        if (string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state) || string.IsNullOrWhiteSpace(stateCookie) || !string.Equals(state, stateCookie, StringComparison.Ordinal))
+            return Redirect(AppendFragment(returnUrl, "error=invalid_state"));
+
+        var callbackUrl = Url.ActionLink(nameof(GoogleCallback), "Auth", values: null, protocol: Request.Scheme, host: Request.Host.ToString());
+        if (string.IsNullOrWhiteSpace(callbackUrl))
+            return Redirect(AppendFragment(returnUrl, "error=invalid_callback"));
+
+        var result = await _authService.LoginWithGoogleCodeAsync(code, callbackUrl, ct);
+        if (!result.Success || result.Data is null)
+            return Redirect(AppendFragment(returnUrl, $"error={Uri.EscapeDataString(result.ErrorCode ?? "google_login_failed")}"));
+
+        var fragment =
+            "access_token=" + Uri.EscapeDataString(result.Data.AccessToken) +
+            "&token_type=" + Uri.EscapeDataString(result.Data.TokenType) +
+            "&expires_in=" + Uri.EscapeDataString(result.Data.ExpiresInSeconds.ToString());
+
+        return Redirect(AppendFragment(returnUrl, fragment));
+    }
+
+    [AllowAnonymous]
     [HttpPost("otp/request")]
     [ProducesResponseType(StatusCodes.Status200OK)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -69,5 +149,24 @@ public class AuthController : ControllerBase
 
         var result = await _authService.MeAsync(userId, ct);
         return result.Success ? Ok(result) : NotFound(result);
+    }
+
+    private static string AppendFragment(string? returnUrl, string fragment)
+    {
+        var baseUrl = string.IsNullOrWhiteSpace(returnUrl) ? "/login" : returnUrl!;
+        var hashIndex = baseUrl.IndexOf('#');
+        var clean = hashIndex >= 0 ? baseUrl.Substring(0, hashIndex) : baseUrl;
+        return $"{clean}#{fragment}";
+    }
+
+    private static string? BuildSafeReturnUrl(string? returnUrl, string[] allowedOrigins)
+    {
+        if (string.IsNullOrWhiteSpace(returnUrl)) return null;
+        if (!Uri.TryCreate(returnUrl, UriKind.Absolute, out var uri)) return null;
+
+        var origin = $"{uri.Scheme}://{uri.Authority}";
+        return allowedOrigins.Any(o => string.Equals(o.TrimEnd('/'), origin, StringComparison.OrdinalIgnoreCase))
+            ? returnUrl
+            : null;
     }
 }

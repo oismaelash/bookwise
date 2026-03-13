@@ -54,5 +54,6 @@ public interface IAuthService
     Task<ApiResponse<OtpRequestResponse>> RequestOtpAsync(RequestOtpRequest request, CancellationToken ct = default);
     Task<ApiResponse<AuthTokenResponse>> VerifyOtpAsync(VerifyOtpRequest request, CancellationToken ct = default);
     Task<ApiResponse<AuthTokenResponse>> LoginWithGoogleAsync(GoogleLoginRequest request, CancellationToken ct = default);
+    Task<ApiResponse<AuthTokenResponse>> LoginWithGoogleCodeAsync(string code, string redirectUri, CancellationToken ct = default);
     Task<ApiResponse<UserViewModel>> MeAsync(int userId, CancellationToken ct = default);
 }

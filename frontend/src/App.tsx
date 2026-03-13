@@ -2,7 +2,7 @@ import React, { Suspense, lazy } from 'react';
 import { BrowserRouter, Routes, Route, NavLink, useLocation, Outlet } from 'react-router-dom';
 import { BookProvider } from './store/BookContext';
 import { Toaster } from 'react-hot-toast';
-import { BookOpen, Users, Tag, Sparkles, LayoutDashboard, Menu, X } from 'lucide-react';
+import { BookOpen, Users, Tag, Sparkles, LayoutDashboard, Menu, X, Rocket } from 'lucide-react';
 import './index.css';
 import { AuthProvider } from './auth/AuthContext';
 import { RequireAuth } from './auth/RequireAuth';
@@ -13,9 +13,10 @@ const AuthorsPage = lazy(() => import('./pages/AuthorsPage'));
 const GenresPage = lazy(() => import('./pages/GenresPage'));
 const AIPage = lazy(() => import('./pages/AIPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
+const LandingPage = lazy(() => import('./pages/LandingPage'));
 
 const navItems = [
-  { to: '/', label: 'Dashboard', icon: LayoutDashboard, exact: true },
+  { to: '/app', label: 'Dashboard', icon: LayoutDashboard, exact: true },
   { to: '/books', label: 'Livros', icon: BookOpen },
   { to: '/authors', label: 'Autores', icon: Users },
   { to: '/genres', label: 'Gêneros', icon: Tag },
@@ -43,7 +44,7 @@ function Sidebar() {
         <div className="p-6 border-b border-amber-900/30">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 bg-amber-600 rounded-xl flex items-center justify-center">
-              <BookOpen size={20} className="text-stone-950" />
+              <Rocket size={20} className="text-stone-950" />
             </div>
             <div>
               <h1 className="font-serif text-lg font-bold text-amber-100">BookWise</h1>
@@ -122,6 +123,14 @@ export default function App() {
           />
           <Routes>
             <Route
+              path="/"
+              element={
+                <Suspense fallback={<LoadingSpinner />}>
+                  <LandingPage />
+                </Suspense>
+              }
+            />
+            <Route
               path="/login"
               element={
                 <Suspense fallback={<LoadingSpinner />}>
@@ -131,7 +140,7 @@ export default function App() {
             />
             <Route element={<RequireAuth />}>
               <Route element={<AppShell />}>
-                <Route path="/" element={<Dashboard />} />
+                <Route path="/app" element={<Dashboard />} />
                 <Route path="/books/*" element={<BooksPage />} />
                 <Route path="/authors/*" element={<AuthorsPage />} />
                 <Route path="/genres/*" element={<GenresPage />} />

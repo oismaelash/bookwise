@@ -10,6 +10,7 @@ type AuthState = {
 
 type AuthContextValue = AuthState & {
   setSession: (data: AuthTokenResponse) => void;
+  bootstrapWithToken: (token: string) => Promise<void>;
   logout: () => void;
 };
 
@@ -50,14 +51,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setState({ token: data.accessToken, user: data.user, initializing: false });
   }, []);
 
+  const bootstrapWithToken = React.useCallback(async (token: string) => {
+    setAccessToken(token);
+    try {
+      const res = await authApi.me();
+      setState({ token, user: res.data!, initializing: false });
+    } catch {
+      clearAccessToken();
+      setState({ token: null, user: null, initializing: false });
+    }
+  }, []);
+
   const logout = React.useCallback(() => {
     clearAccessToken();
     setState({ token: null, user: null, initializing: false });
   }, []);
 
   const value: AuthContextValue = React.useMemo(
-    () => ({ ...state, setSession, logout }),
-    [state, setSession, logout]
+    () => ({ ...state, setSession, bootstrapWithToken, logout }),
+    [state, setSession, bootstrapWithToken, logout]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
