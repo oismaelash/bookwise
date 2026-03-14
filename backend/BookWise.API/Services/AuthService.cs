@@ -58,11 +58,19 @@ public class AuthService : IAuthService
         var codeHash = HashOtp(phone, code, GetOtpPepper());
         var expiresAt = now.AddMinutes(ttlMinutes);
 
-        var pilotMessageId = await SendOtpViaPilotStatusAsync(pilotApiKey, pilotTemplateId, phone, code, ct);
-        if (pilotMessageId is null)
-            return ApiResponse<OtpRequestResponse>.Fail("Falha ao enviar o código por WhatsApp.", errorCode: "OTP_SEND_FAILED");
+        var send = await SendOtpViaPilotStatusAsync(pilotApiKey, pilotTemplateId, phone, code, ct);
+        if (send.MessageId is null)
+        {
+            var suffix = send.StatusCode.HasValue ? $" (HTTP {send.StatusCode})" : "";
+            var msg = $"Falha ao enviar o código por WhatsApp.{suffix}";
+            if (!string.IsNullOrWhiteSpace(send.ErrorDetail))
+                msg = $"{msg} {send.ErrorDetail}";
 
-        await _uow.LoginOtps.AddAsync(LoginOtp.Create(phone, codeHash, expiresAt, pilotMessageId), ct);
+            var codeErr = send.StatusCode == 403 ? "OTP_PROVIDER_FORBIDDEN" : "OTP_SEND_FAILED";
+            return ApiResponse<OtpRequestResponse>.Fail(msg, errorCode: codeErr);
+        }
+
+        await _uow.LoginOtps.AddAsync(LoginOtp.Create(phone, codeHash, expiresAt, send.MessageId), ct);
         await _uow.CommitAsync(ct);
 
         return ApiResponse<OtpRequestResponse>.Ok(new OtpRequestResponse(true), "Código enviado.");
@@ -461,7 +469,7 @@ public class AuthService : IAuthService
     private static UserViewModel ToViewModel(UserAccount user) =>
         new(user.Id, user.Email, user.Name, user.PhoneNumberE164);
 
-    private async Task<string?> SendOtpViaPilotStatusAsync(
+    private async Task<(string? MessageId, int? StatusCode, string? ErrorDetail)> SendOtpViaPilotStatusAsync(
         string apiKey,
         string templateId,
         string destinationNumberE164,
@@ -486,16 +494,53 @@ public class AuthService : IAuthService
 
             msg.Content = new StringContent(System.Text.Json.JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json");
             using var res = await client.SendAsync(msg, ct);
-            if (!res.IsSuccessStatusCode) return null;
+            var content = await res.Content.ReadAsStringAsync(ct);
+            if (!res.IsSuccessStatusCode)
+            {
+                var detail = TryExtractErrorDetail(content);
+                if (string.IsNullOrWhiteSpace(detail))
+                    detail = content.Length > 250 ? content.Substring(0, 250) : content;
 
-            var json = await res.Content.ReadAsStringAsync(ct);
-            using var doc = System.Text.Json.JsonDocument.Parse(json);
+                if (!string.IsNullOrWhiteSpace(detail))
+                    _logger.LogWarning("Pilot Status OTP send failed: HTTP {StatusCode} - {Detail}", (int)res.StatusCode, detail);
+                else
+                    _logger.LogWarning("Pilot Status OTP send failed: HTTP {StatusCode}", (int)res.StatusCode);
+
+                return (null, (int)res.StatusCode, detail);
+            }
+
+            using var doc = System.Text.Json.JsonDocument.Parse(content);
             if (doc.RootElement.TryGetProperty("id", out var idProp) && idProp.ValueKind == System.Text.Json.JsonValueKind.String)
-                return idProp.GetString();
+                return (idProp.GetString(), (int)res.StatusCode, null);
+
+            return (null, (int)res.StatusCode, "Resposta do provedor inválida.");
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Falha ao enviar OTP via Pilot Status");
+        }
+
+        return (null, null, null);
+    }
+
+    private static string? TryExtractErrorDetail(string body)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var root = doc.RootElement;
+
+            if (root.TryGetProperty("message", out var msg) && msg.ValueKind == System.Text.Json.JsonValueKind.String)
+                return msg.GetString();
+
+            if (root.TryGetProperty("error", out var err) && err.ValueKind == System.Text.Json.JsonValueKind.String)
+                return err.GetString();
+
+            if (root.TryGetProperty("code", out var code) && code.ValueKind == System.Text.Json.JsonValueKind.String)
+                return code.GetString();
+        }
+        catch
+        {
         }
 
         return null;
